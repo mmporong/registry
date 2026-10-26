@@ -358,23 +358,28 @@ func detectDescription() string {
 	return "An MCP server that provides [describe what your server does]"
 }
 
-func detectRepoURL() string {
-	sanitizeURL := func(url string) string {
-		return strings.TrimPrefix(url, "git+")
+// sanitizeRepoURL strips the npm "git+" prefix and the ".git" suffix, and
+// rewrites SSH forms of github.com and gitlab.com URLs to the https form that
+// repository.url validation accepts.
+func sanitizeRepoURL(repoURL string) string {
+	repoURL = strings.TrimSuffix(strings.TrimPrefix(repoURL, "git+"), ".git")
+	for _, host := range []string{"github.com", "gitlab.com"} {
+		for _, prefix := range []string{"git@" + host + ":", "ssh://git@" + host + "/"} {
+			if strings.HasPrefix(repoURL, prefix) {
+				return "https://" + host + "/" + strings.TrimPrefix(repoURL, prefix)
+			}
+		}
 	}
+	return repoURL
+}
 
+func detectRepoURL() string {
 	// Try git remote
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
 	if output, err := cmd.Output(); err == nil {
-		url := strings.TrimSpace(string(output))
-		// Convert SSH URL to HTTPS if needed
-		if strings.HasPrefix(url, "git@github.com:") {
-			url = strings.Replace(url, "git@github.com:", "https://github.com/", 1)
-		}
-		url = strings.TrimSuffix(url, ".git")
-		return url
+		return sanitizeRepoURL(strings.TrimSpace(string(output)))
 	}
 
 	// Try package.json repository field
@@ -383,11 +388,11 @@ func detectRepoURL() string {
 		if json.Unmarshal(data, &pkg) == nil {
 			if repo, ok := pkg["repository"].(map[string]any); ok {
 				if url, ok := repo["url"].(string); ok {
-					return sanitizeURL(strings.TrimSuffix(url, ".git"))
+					return sanitizeRepoURL(url)
 				}
 			}
 			if repo, ok := pkg["repository"].(string); ok {
-				return sanitizeURL(strings.TrimSuffix(repo, ".git"))
+				return sanitizeRepoURL(repo)
 			}
 		}
 	}

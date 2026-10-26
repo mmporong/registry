@@ -3,6 +3,8 @@ package commands
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -97,4 +99,24 @@ func TestDetectRepoID(t *testing.T) {
 		assert.Empty(t, id)
 		assert.Error(t, err)
 	})
+}
+
+func TestDetectRepoURLNormalizesSSHForms(t *testing.T) {
+	// The registry only accepts https repository URLs, so SSH forms written by
+	// npm or git must not reach server.json as-is.
+	tests := map[string]string{
+		`{"type": "git", "url": "git+ssh://git@github.com/acme/weather.git"}`: "https://github.com/acme/weather",
+		`"git@github.com:acme/weather.git"`:                                   "https://github.com/acme/weather",
+		`"git@gitlab.com:acme/tools/weather.git"`:                             "https://gitlab.com/acme/tools/weather",
+		`"git+https://github.com/acme/weather.git"`:                           "https://github.com/acme/weather",
+	}
+	for repository, want := range tests {
+		t.Run(repository, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"repository": `+repository+`}`), 0600))
+			t.Chdir(dir)
+
+			assert.Equal(t, want, detectRepoURL())
+		})
+	}
 }
